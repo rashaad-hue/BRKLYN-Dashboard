@@ -181,11 +181,25 @@ const ADAPTERS = {
      Example (Deputy): pasted permanent token (secret ROSTERING_API_TOKEN).
   */
   rostering: {
-    configured: false,
-    auth: null,
+    configured: true,
+    auth: 'token', /* Deputy permanent token (Bearer). Secrets: ROSTERING_API_TOKEN, var: ROSTERING_API_BASE */
     oauth: {},
-    async status(env, h) { return { connected: false }; },
-    async fetchRange(env, h, q) { throw new NotConfigured('rostering'); },
+    async status(env, h) {
+      if (!env.ROSTERING_API_TOKEN || !env.ROSTERING_API_BASE) return { connected: false };
+      const base = String(env.ROSTERING_API_BASE).replace(/\/+$/, '');
+      let org = 'Deputy · ' + base.replace(/^https?:\/\//, '').split('.')[0];
+      try {
+        const me = await h.fetchJson(base + '/api/v1/me', {
+          headers: { 'Authorization': 'Bearer ' + env.ROSTERING_API_TOKEN, 'Accept': 'application/json' }
+        });
+        if (me && me.Company && typeof me.Company === 'string') org = me.Company;
+      } catch (e) { /* keep host-based label */ }
+      return { connected: true, org: org, sandbox: false };
+    },
+    async fetchRange(env, h, q) {
+      const cost = await deputyRosteredCost(env, h, q.from, q.to);
+      return { cost: cost };
+    },
     async fetchMonthly(env, h, q) { return { months: [], cost: [] }; }
   }
 };
@@ -306,6 +320,36 @@ function parseLightspeedSales(text) {
     rows.push({ date: dm[0], count: count });
   }
   return rows;
+}
+
+/* ----------------------------------------------------------------------------
+   Deputy rostering helper (used by the rostering adapter above).
+   Sums the rostered Cost for the period from the Roster resource. Powers the
+   PROJECTED wage % only (rostered cost / revenue); the actual, verified Wage %
+   comes from Xero. Approximate by nature (rostered base cost, no super/on-costs).
+---------------------------------------------------------------------------- */
+async function deputyRosteredCost(env, h, from, to) {
+  const base = String(env.ROSTERING_API_BASE || '').replace(/\/+$/, '');
+  if (!base || !env.ROSTERING_API_TOKEN) throw new NotConfigured('rostering');
+  const rows = await h.fetchJson(base + '/api/v1/resource/Roster/QUERY', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + env.ROSTERING_API_TOKEN,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      search: {
+        f1: { field: 'Date', type: 'ge', data: from },
+        f2: { field: 'Date', type: 'le', data: to }
+      },
+      max: 2000
+    })
+  });
+  if (!Array.isArray(rows)) return 0;
+  let cost = 0;
+  for (const r of rows) { const c = parseFloat(r && r.Cost); if (isFinite(c)) cost += c; }
+  return cost;
 }
 
 /* ============================================================================
