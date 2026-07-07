@@ -143,16 +143,31 @@ const ADAPTERS = {
       return { connected: !!last, org: last ? 'Lightspeed (report upload)' : null, sandbox: false, lastSync: last };
     },
     async parseExport(env, h, raw) {
-      return parseLightspeedSales(raw.text);
+      const rows = parseLightspeedSales(raw.text);
+      /* Also keep ONE consolidated date->count map so metric reads cost a single
+         KV get, not one per day (the whole trend fits well under Cloudflare's
+         free-plan subrequest limit). */
+      const map = await posDayMap(env);
+      for (const r of rows) { if (r && r.date) map[r.date] = r.count; }
+      await env.TOKENS.put('pos:days', JSON.stringify(map));
+      return rows;
     },
     async fetchRange(env, h, q) {
-      const r = await h.readIngested(q.from, q.to);
-      if (!r.daysWithData) throw new NotConfigured('pos');
-      return { count: r.sums.count || 0 };
+      const map = await posDayMap(env);
+      let count = 0, has = false;
+      for (const d in map) { if (d >= q.from && d <= q.to) { count += map[d]; has = true; } }
+      if (!has) throw new NotConfigured('pos');
+      return { count: count };
     },
     async fetchMonthly(env, h, q) {
-      const m = await h.monthlyIngested(q.fromMonth, q.toMonth);
-      return { months: m.months, count: m.byMonth.map(function (x) { return x ? (x.count || 0) : null; }) };
+      const map = await posDayMap(env);
+      const months = monthList(q.fromMonth, q.toMonth);
+      const count = months.map(function (mo) {
+        let c = null;
+        for (const d in map) { if (d.slice(0, 7) === mo) c = (c || 0) + map[d]; }
+        return c;
+      });
+      return { months: months, count: count };
     }
   },
 
@@ -267,6 +282,10 @@ function splitCsvLine(line) {
   }
   out.push(cur);
   return out;
+}
+async function posDayMap(env) {
+  try { const ex = await env.TOKENS.get('pos:days'); return ex ? (JSON.parse(ex) || {}) : {}; }
+  catch (e) { return {}; }
 }
 function parseLightspeedSales(text) {
   const rows = [];
