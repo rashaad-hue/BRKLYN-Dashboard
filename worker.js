@@ -134,12 +134,26 @@ const ADAPTERS = {
      connect.squareupsandbox.com.
   */
   pos: {
-    configured: false,
+    configured: true,
     auth: null,
+    mode: 'export', /* Lightspeed O-Series: fed by uploaded sales report (API is gated) */
     oauth: {},
-    async status(env, h) { return { connected: false }; },
-    async fetchRange(env, h, q) { throw new NotConfigured('pos'); },
-    async fetchMonthly(env, h, q) { throw new NotConfigured('pos'); }
+    async status(env, h) {
+      const last = await env.TOKENS.get('lastSync:pos');
+      return { connected: !!last, org: last ? 'Lightspeed (report upload)' : null, sandbox: false, lastSync: last };
+    },
+    async parseExport(env, h, raw) {
+      return parseLightspeedSales(raw.text);
+    },
+    async fetchRange(env, h, q) {
+      const r = await h.readIngested(q.from, q.to);
+      if (!r.daysWithData) throw new NotConfigured('pos');
+      return { count: r.sums.count || 0 };
+    },
+    async fetchMonthly(env, h, q) {
+      const m = await h.monthlyIngested(q.fromMonth, q.toMonth);
+      return { months: m.months, count: m.byMonth.map(function (x) { return x ? (x.count || 0) : null; }) };
+    }
   },
 
   /* >>> ADAPTER 3: ROSTERING (optional - only if the owner has one)
@@ -230,6 +244,49 @@ async function xeroRangeTotals(h, tenantId, from, to) {
   });
   const report = resp && resp.Reports && resp.Reports[0];
   return xeroParsePL(report);
+}
+
+/* ----------------------------------------------------------------------------
+   Lightspeed POS helpers (used by the pos adapter above).
+   The POS supplies ONE number: the count of completed transactions per day.
+   O-Series API is partner-gated, so the count is fed by the venue's own
+   uploaded sales-summary CSV (columns: saledate, salecount, ...). We take the
+   date + salecount only; dollar columns are ignored (money only comes from Xero).
+---------------------------------------------------------------------------- */
+function splitCsvLine(line) {
+  const out = [];
+  let cur = '', inq = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inq) {
+      if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inq = false; }
+      else cur += ch;
+    } else if (ch === '"') { inq = true; }
+    else if (ch === ',') { out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+function parseLightspeedSales(text) {
+  const rows = [];
+  const lines = String(text || '').split(/\r?\n/).filter(function (l) { return l.trim() !== ''; });
+  if (lines.length < 2) return rows;
+  const header = splitCsvLine(lines[0]).map(function (h) { return h.trim().toLowerCase().replace(/^"|"$/g, ''); });
+  let di = header.indexOf('saledate');
+  let ci = header.indexOf('salecount');
+  if (di < 0) di = header.findIndex(function (h) { return /date/.test(h); });
+  if (ci < 0) ci = header.findIndex(function (h) { return /count/.test(h); });
+  if (di < 0 || ci < 0) return rows;
+  for (let i = 1; i < lines.length; i++) {
+    const cols = splitCsvLine(lines[i]);
+    if (cols.length <= Math.max(di, ci)) continue;
+    const dm = /(\d{4})-(\d{2})-(\d{2})/.exec((cols[di] || '').replace(/^"|"$/g, '').trim());
+    const count = parseInt(String(cols[ci]).replace(/[^0-9-]/g, ''), 10);
+    if (!dm || !isFinite(count)) continue;
+    rows.push({ date: dm[0], count: count });
+  }
+  return rows;
 }
 
 /* ============================================================================
