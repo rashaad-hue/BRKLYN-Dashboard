@@ -14,6 +14,12 @@ rules = [
   { type = "Text", globs = ["**/*.html"], fallthrough = true }
 ]
 
+# Plain (non-secret) vars. `wrangler deploy` reconciles vars to this file, so
+# any dashboard-set plaintext var not listed here is wiped on the next deploy -
+# keep them here. (Secrets like ROSTERING_API_TOKEN persist separately.)
+[vars]
+ROSTERING_API_BASE = "https://brklyn.au.deputy.com"
+
 # Token + session store (KV). Declared so the GitHub -> Cloudflare deploy
 # AUTO-PROVISIONS it: Cloudflare reads this binding, creates the namespace, and
 # writes its id back here during deploy. No manual `wrangler kv namespace
