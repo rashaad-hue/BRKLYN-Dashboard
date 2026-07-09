@@ -346,6 +346,8 @@ body::before {
 @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(79,203,140,0.5); } 70% { box-shadow: 0 0 0 6px rgba(79,203,140,0); } 100% { box-shadow: 0 0 0 0 rgba(79,203,140,0); } }
 .skel { border-radius: 8px; background: linear-gradient(100deg, rgba(255,255,255,0.05) 30%, rgba(255,255,255,0.13) 50%, rgba(255,255,255,0.05) 70%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
 .skel-value { height: 44px; width: 62%; margin: 4px 0 10px; }
+.skel-line { height: 12px; width: 82%; margin: 9px 0; border-radius: 6px; }
+.skel-line.short { width: 48%; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ---- Motion choreography ---- */
@@ -458,7 +460,7 @@ var ACCENTS = [
 function defaultSettings() {
   return {
     venueName: 'BRKLYN',
-    defaultPeriod: 'thisMonth',
+    defaultPeriod: 'lastMonth',
     weekStart: 1,            /* 1 = Monday */
     rolloverHour: 0,         /* sales before this hour count to the previous trading day */
     timezone: TZ_DEFAULTS[KIT_CONFIG.region] || 'Australia/Sydney',
@@ -1139,8 +1141,10 @@ function metricCard(key, cur, prev, yoy, r) {
   card.appendChild(metricHead(key, def));
 
   var v = metricValue(key, cur);
-  if (state.loading && state.data == null) {
+  if (state.loading) {
     card.appendChild(el('div', 'skel skel-value'));
+    card.appendChild(el('div', 'skel skel-line'));
+    card.appendChild(el('div', 'skel skel-line short'));
   } else {
     card.appendChild(headline(key, cur, v));
     if (key === 'acs' && v === 'dash') card.appendChild(el('div', 'm-sub', 'No transactions in this period'));
@@ -2191,7 +2195,7 @@ function renderSettings(root) {
 /* ============================================================
    Boot
 ============================================================ */
-state.period = SETTINGS.defaultPeriod || 'thisWeek';
+state.period = SETTINGS.defaultPeriod || 'lastMonth';
 render();
 fetchData();
 </script>
